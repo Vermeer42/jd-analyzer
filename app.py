@@ -1,4 +1,5 @@
 import streamlit as st
+import time  # 修复问题一：补齐缺失的依赖
 from openai import OpenAI
 import json
 import pandas as pd
@@ -14,16 +15,14 @@ from supabase import create_client, Client
 st.set_page_config(page_title="AI 智能求职分析引擎", page_icon="🚀", layout="wide")
 
 # ==========================================
-# 1. 核心资源初始化 (移除 easyocr，内存暴降)
+# 1. 核心资源初始化
 # ==========================================
 @st.cache_resource
 def load_resources():
-    # 1. 链接 Supabase 云端数据库
     url = st.secrets["SUPABASE_URL"]
     key = st.secrets["SUPABASE_KEY"]
     supabase = create_client(url, key)
     
-    # 2. 链接阿里云百炼平台 (多模态视觉大模型)
     ali_client = OpenAI(
         api_key=st.secrets["DASHSCOPE_API_KEY"],
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -32,16 +31,11 @@ def load_resources():
 
 supabase, ali_client = load_resources()
 
-# ==========================================
-# 2. 状态管理 (身份识别)
-# ==========================================
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 
-# 辅助函数：把上传的 PIL 图片转化为大模型需要的 Base64 字符串
 def convert_image_to_base64(image) -> str:
     buffered = io.BytesIO()
-    # 强制转化为 JPEG 格式压缩，进一步节省带宽
     image.convert("RGB").save(buffered, format="JPEG", quality=85)
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
@@ -64,7 +58,6 @@ if not st.session_state.user_id:
 # 分支二：核心业务流 (工作台)
 # ==========================================
 else:
-    # --- 侧边栏：候选人画像配置 ---
     with st.sidebar:
         st.header("👤 候选人画像配置")
         st.caption(f"当前云端身份：{st.session_state.user_id}")
@@ -108,7 +101,6 @@ else:
             if "profile_data" in st.session_state: del st.session_state.profile_data 
             st.rerun()
 
-    # --- 动态生成 System Prompt ---
     DYNAMIC_PROFILE = f"""
     你是一个资深的求职战略分析师。你必须基于以下【候选人画像】来严格评估用户上传的JD图片。
     # 候选人画像
@@ -118,6 +110,7 @@ else:
     - 职业方向：{user_target}
     """
 
+    # 修复问题二：在 Prompt 里严格限制 "JD核心内容精简" 必须是纯文本字符串
     JSON_RULES = """
     # 计分规则 (基础分 50)
     - 加分：与核心技能匹配度高(+15)；大厂/头部公司(+20)；一线及新一线城市(+10)；转正机会(+10)。
@@ -125,7 +118,7 @@ else:
     - 否决：纯理工/代码背景且无产品思维、单休。
 
     # 输出要求
-    请直接输出严格的 JSON 格式数据，不要包含任何 markdown 标记（不要用 ```json 包裹），确保可以被 json.loads 解析。
+    请直接输出严格的 JSON 格式数据，不要包含任何 markdown 标记（不要用 ```json 包裹）。
     结构如下：
     {
         "公司": "提取公司名",
@@ -141,13 +134,12 @@ else:
         "经验复用点": "说明候选人的经历能否在此复用，具体是哪一点",
         "转型卡点": "说明缺乏什么具体经验或硬技能",
         "综合详细建议": "50-100字详细分析。说明归因及面试建议",
-        "JD核心内容精简": "将原JD去粗取精，按岗位职责和任职要求列出"
+        "JD核心内容精简": "核心关键：必须是纯文本字符串，使用换行符\\n清晰列出岗位职责和任职要求，绝对不要输出嵌套的JSON对象、列表或带序号的字典"
     }
     """
     PROMPT = DYNAMIC_PROFILE + JSON_RULES
 
-    # --- 主体 UI ---
-    st.title("🚀 AI 智能求职分析与匹配引擎 (多模态云端版)")
+    st.title("🚀 AI 智能求职分析与匹配引擎")
     st.markdown("上传 JD 截图，秒级输出**多维度匹配报告**。")
 
     uploaded_file = st.file_uploader("📸 点击或拖拽上传 JD 截图 (支持 png/jpg)", type=["png", "jpg", "jpeg"])
@@ -157,17 +149,14 @@ else:
         st.image(image, caption="待分析的 JD 截图", use_container_width=True)
         
         if st.button("⚡ 开始云端深度分析", type="primary", use_container_width=True):
-            # 采用你定下的克制文案
             with st.spinner("正在进行ai分析中..."):
                 try:
-                    # 1. 极致压缩图片并转为 Base64
                     max_width = 1000
                     if image.width > max_width:
                         ratio = max_width / image.width
                         image = image.resize((max_width, int(image.height * ratio)), Image.Resampling.LANCZOS)
                     base64_image = convert_image_to_base64(image)
                     
-                    # 2. 呼叫阿里的多模态视觉大模型 (这里使用性价比极高的 qwen-vl-plus)
                     response = ali_client.chat.completions.create(
                         model="qwen-vl-plus",
                         messages=[
@@ -182,12 +171,10 @@ else:
                         response_format={"type": "json_object"}
                     )
                     
-                    # 3. 清洗并解析返回数据
                     ai_reply = response.choices[0].message.content
                     cleaned_json_str = re.sub(r'```json\s*|\s*```', '', ai_reply).strip()
                     jd_data = json.loads(cleaned_json_str)
                     
-                    # 4. 写入云端数据库
                     company_name = jd_data.get("公司", "未知公司")
                     role_name = jd_data.get("岗位", "未知岗位")
                     
@@ -244,13 +231,19 @@ else:
                         st.write(f"📍 **地点：** {jd_json.get('Base地点', '未知')}")
                         st.write(f"💰 **薪资：** {jd_json.get('薪资待遇', '未知')}")
                         st.write(f"📅 **出勤：** {jd_json.get('出勤要求', '未知')}")
-                        st.write(f"🛠️ **硬技能：** {jd_json.get('硬技能要求', '无')}")
+                        st.write(f"📅 **硬技能：** {jd_json.get('硬技能要求', '无')}")
                         st.divider()
                         if st.button("🗑️ 从云端彻底删除", key=f"del_{db_id}", use_container_width=True):
                             supabase.table('jd_analysis_records').delete().eq('id', db_id).execute()
                             st.rerun()
+                    
+                    # 修复问题二（前端兜底）：检查字段类型，确保如果是字符串就漂亮排版，是对象就优雅展示
                     with st.status("📄 查看清洗后的 JD 原文要求"):
-                        st.write(jd_json.get('JD核心内容精简', '暂无内容'))
+                        jd_content_raw = jd_json.get('JD核心内容精简', '暂无内容')
+                        if isinstance(jd_content_raw, (dict, list)):
+                            st.json(jd_content_raw)  # 如果AI固执地返回了结构化数据，用纯洁的JSON视图兜底
+                        else:
+                            st.write(jd_content_raw)  # 纯文本状态下输出漂亮排版
                         
     except Exception as e:
         st.error(f"拉取云端数据失败: {e}")
