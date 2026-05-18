@@ -237,13 +237,29 @@ else:
                             supabase.table('jd_analysis_records').delete().eq('id', db_id).execute()
                             st.rerun()
                     
-                    # 修复问题二（前端兜底）：检查字段类型，确保如果是字符串就漂亮排版，是对象就优雅展示
+# --- 终极排版修复：智能解析大模型的结构化输出 ---
                     with st.status("📄 查看清洗后的 JD 原文要求"):
                         jd_content_raw = jd_json.get('JD核心内容精简', '暂无内容')
-                        if isinstance(jd_content_raw, (dict, list)):
-                            st.json(jd_content_raw)  # 如果AI固执地返回了结构化数据，用纯洁的JSON视图兜底
+                        
+                        # 1. 如果大模型返回了字典（分类好了“岗位职责”和“任职要求”）
+                        if isinstance(jd_content_raw, dict):
+                            for key, values in jd_content_raw.items():
+                                st.markdown(f"**📌 {key}**") # 输出加粗标题
+                                if isinstance(values, list):
+                                    for item in values:
+                                        st.markdown(f"- {item}") # 输出项目符号列表
+                                else:
+                                    st.write(values)
+                                st.write("") # 加个空行让排版更透气
+                                
+                        # 2. 如果大模型只返回了一个纯列表
+                        elif isinstance(jd_content_raw, list):
+                            for item in jd_content_raw:
+                                st.markdown(f"- {item}")
+                                
+                        # 3. 如果大模型乖乖返回了纯文本
                         else:
-                            st.write(jd_content_raw)  # 纯文本状态下输出漂亮排版
+                            st.write(jd_content_raw)
                         
     except Exception as e:
         st.error(f"拉取云端数据失败: {e}")
