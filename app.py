@@ -111,6 +111,7 @@ else:
     """
 
     # 修复问题二：在 Prompt 里严格限制 "JD核心内容精简" 必须是纯文本字符串
+# --- 修复并升级的 System Prompt ---
     JSON_RULES = """
     # 计分规则 (基础分 50)
     - 加分：与核心技能匹配度高(+15)；大厂/头部公司(+20)；一线及新一线城市(+10)；转正机会(+10)。
@@ -124,6 +125,8 @@ else:
         "公司": "提取公司名",
         "公司业务简介": "用一两句话简述该公司的核心业务或行业地位",
         "岗位": "提取岗位名",
+        "信息来源": "识别招聘平台（如Boss直聘、猎聘、实习僧等UI特征）。如果是小红书等社交渠道，请严格标注'内推'；如无法识别，填'未知'",
+        "投递邮箱": "精准提取JD中出现的直接投递邮箱（如HR或内推人留下的邮箱），如无则填'无'",
         "Base地点": "城市",
         "薪资待遇": "例如：250元/天",
         "出勤要求": "例如：每周4天",
@@ -231,8 +234,25 @@ else:
                         st.write(f"📍 **地点：** {jd_json.get('Base地点', '未知')}")
                         st.write(f"💰 **薪资：** {jd_json.get('薪资待遇', '未知')}")
                         st.write(f"📅 **出勤：** {jd_json.get('出勤要求', '未知')}")
-                        st.write(f"📅 **硬技能：** {jd_json.get('硬技能要求', '无')}")
+                        st.write(f"🛠️ **硬技能：** {jd_json.get('硬技能要求', '无')}")
+                        
+                        st.divider() # 华丽的分割线
+                        
+                        # --- 新增：平台与邮箱展示 ---
+                        source = jd_json.get('信息来源', '未知')
+                        if "内推" in source:
+                            st.error(f"📢 **渠道：** {source}") # 如果是内推，用红色显眼标记
+                        else:
+                            st.info(f"📢 **渠道：** {source}")  # 普通平台用蓝色标记
+                            
+                        email = jd_json.get('投递邮箱', '无')
+                        if email != '无':
+                            st.success(f"✉️ **投递邮箱：**\n{email}") # 有邮箱时高亮显示
+                        else:
+                            st.write(f"✉️ **投递邮箱：** {email}")
+                            
                         st.divider()
+                        
                         if st.button("🗑️ 从云端彻底删除", key=f"del_{db_id}", use_container_width=True):
                             supabase.table('jd_analysis_records').delete().eq('id', db_id).execute()
                             st.rerun()
