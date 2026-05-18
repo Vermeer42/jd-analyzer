@@ -114,7 +114,7 @@ else:
 # --- 修复并升级的 System Prompt ---
     JSON_RULES = """
     # 计分规则 (基础分 50)
-    - 加分：与核心技能匹配度高(+15)；大厂/头部公司(+20)；一线及新一线城市(+10)；转正机会(+10)。
+    - 加分：与核心技能匹配度高(+15)；大厂/头部公司(字节/阿里/腾讯等)(+30)；一线及新一线城市(+10)。
     - 扣分：打杂/日常纯执行(-10)；隐性加班黑话(-10)；日薪低于行业基准(-15)。
     - 否决：纯理工/代码背景且无产品思维、单休。
 
@@ -147,19 +147,38 @@ else:
 
     uploaded_file = st.file_uploader("📸 点击或拖拽上传 JD 截图 (支持 png/jpg)", type=["png", "jpg", "jpeg"])
 
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file)
-        st.image(image, caption="待分析的 JD 截图", use_container_width=True)
+    # 1. 开启多图上传魔法参数：accept_multiple_files=True
+    uploaded_files = st.file_uploader("📸 批量上传 JD 截图 (支持多选/拖拽)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+
+    # 如果用户上传了文件（此时 uploaded_files 是一个列表）
+    if uploaded_files:
+        st.info(f"📁 已就绪 {len(uploaded_files)} 份 JD 截图，准备批量解析。")
         
-        if st.button("⚡ 开始云端深度分析", type="primary", use_container_width=True):
-            with st.spinner("正在进行ai分析中..."):
+        if st.button("⚡ 开始批量云端深度分析", type="primary", use_container_width=True):
+            
+            # 初始化进度条和计数器
+            progress_bar = st.progress(0)
+            total_files = len(uploaded_files)
+            success_count = 0
+            
+            # 创建一个空白的区域，用于动态显示当前正在分析哪个文件
+            status_text = st.empty()
+
+            # 2. 开启排队循环处理模式
+            for i, file in enumerate(uploaded_files):
+                status_text.markdown(f"⏳ **正在高速分析第 {i+1}/{total_files} 份：** `{file.name}` ...")
+                
                 try:
+                    image = Image.open(file)
+                    
+                    # 压缩与编码
                     max_width = 1000
                     if image.width > max_width:
                         ratio = max_width / image.width
                         image = image.resize((max_width, int(image.height * ratio)), Image.Resampling.LANCZOS)
                     base64_image = convert_image_to_base64(image)
                     
+                    # 呼叫大模型
                     response = ali_client.chat.completions.create(
                         model="qwen-vl-plus",
                         messages=[
@@ -174,6 +193,7 @@ else:
                         response_format={"type": "json_object"}
                     )
                     
+                    # 解析与入库
                     ai_reply = response.choices[0].message.content
                     cleaned_json_str = re.sub(r'```json\s*|\s*```', '', ai_reply).strip()
                     jd_data = json.loads(cleaned_json_str)
@@ -188,12 +208,24 @@ else:
                         "json_data": jd_data
                     }).execute()
                     
-                    st.success(f"🎉 分析成功！【{company_name} - {role_name}】已永久封存于云端。")
-                    time.sleep(0.5)
-                    st.rerun()
+                    success_count += 1
                     
                 except Exception as e:
-                    st.error(f"分析过程中遇到问题: {e}")
+                    st.error(f"❌ 解析 {file.name} 时遇到问题: {e}")
+                
+                # 更新进度条 (当前索引+1 除以 总数)
+                progress_bar.progress((i + 1) / total_files)
+                time.sleep(0.5) # 给接口留点喘息时间，防止被阿里限流
+                
+            # 循环结束后的收尾动作
+            status_text.empty() # 清空状态提示
+            if success_count == total_files:
+                st.success(f"🎉 完美！批量分析完毕，共封存 {success_count} 份岗位至云端。")
+            else:
+                st.warning(f"⚠️ 批量分析结束。成功 {success_count} 份，失败 {total_files - success_count} 份。")
+                
+            time.sleep(1.5)
+            st.rerun()
 
     st.divider()
 
